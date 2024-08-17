@@ -59,11 +59,17 @@ namespace Lean
 
 namespace Expr
 
+/--
+Returns the constants used in the expression `e` that are in the given constant map.
+-/
 def getUsedConstNamesFrom (consts : ConstMap) (e : Expr) : Array Name :=
   let f (n : Name) (ns : Array Name) : Array Name :=
     if consts.contains n then ns.push n else ns
   e.foldConsts #[] f
 
+/--
+Returns the `ConstantInfo`'s of all constants used in the expression `e` that are in the given constant map.
+-/
 def getUsedConstInfoFrom (consts : ConstMap) (e : Expr) : Array ConstantInfo :=
   let f (n : Name) (arr : Array ConstantInfo) : Array ConstantInfo :=
     match consts.find? n with
@@ -71,6 +77,9 @@ def getUsedConstInfoFrom (consts : ConstMap) (e : Expr) : Array ConstantInfo :=
     | none => arr
   e.foldConsts #[] f
 
+/--
+Same as `getUsedConstNamesFrom`, but returns a `NameSet` instead of an `Array Name`.
+-/
 def getUsedConstNamesFromAsSet (consts : ConstMap) (e : Expr) : NameSet :=
   let f (n : Name) (ns : NameSet) : NameSet :=
     if consts.contains n then ns.insert n else ns
@@ -81,6 +90,9 @@ end Expr
 def ConstantInfo.quickCmp (c₁ c₂ : ConstantInfo) : Ordering :=
   Name.quickCmp c₁.name c₂.name
 
+/--
+Similar to `NameSet`, but for `ConstantInfo` instead of `Name`.
+-/
 def ConstantInfoSet := RBTree ConstantInfo ConstantInfo.quickCmp
 
 namespace ConstantInfoSet
@@ -100,12 +112,21 @@ end ConstantInfoSet
 
 namespace ConstantInfo
 
+/--
+Returns the constants used in the type of the constant `c` that are in the given constant map.
+-/
 def getTypeDependencies (consts : ConstMap) (c : ConstantInfo) : Array Name :=
   c.type.getUsedConstNamesFrom consts
 
+/--
+Same as `getTypeDependencies`, but returns a `NameSet` instead of an `Array Name`.
+-/
 def getTypeDependenciesAsSet (consts : ConstMap) (c : ConstantInfo) : NameSet :=
   c.type.getUsedConstNamesFromAsSet consts
 
+/--
+Returns the constants used in the value of the constant `c` that are in the given constant map.
+-/
 def getValueDependencies (consts : ConstMap) (c : ConstantInfo) : Array Name :=
   let f (acc : Array Name) (n : Name) : Array Name := if consts.contains n then acc.push n else acc
   match c.value? with
@@ -117,6 +138,9 @@ def getValueDependencies (consts : ConstMap) (c : ConstantInfo) : Array Name :=
     | .recInfo val => val.all.foldl f #[]
     | _ => #[]
 
+/--
+Same as `getValueDependencies`, but returns a `NameSet` instead of an `Array Name`.
+-/
 def getValueDependenciesAsSet (consts : ConstMap) (c : ConstantInfo) : NameSet :=
   let f (acc : NameSet) (n : Name) : NameSet := if consts.contains n then acc.insert n else acc
   match c.value? with
@@ -131,12 +155,21 @@ def getValueDependenciesAsSet (consts : ConstMap) (c : ConstantInfo) : NameSet :
       | .recInfo val => @RBTree.ofList Name Name.quickCmp val.all |>.fold f NameSet.empty
       | _ => {}
 
+/--
+Returns the constants used in the type and value of the constant `c` that are in the given constant map.
+-/
 def getDependencies (consts : ConstMap) (c : ConstantInfo) : Array Name :=
   getTypeDependencies consts c ++ getValueDependencies consts c
 
+/--
+Same as `getDependencies`, but returns a `NameSet` instead of an `Array Name`.
+-/
 def getDependenciesAsSet (consts : ConstMap) (c : ConstantInfo) : NameSet :=
   getTypeDependenciesAsSet consts c ++ getValueDependenciesAsSet consts c
 
+/--
+Returns the kind of the constant `c` i.e, whether it is a definition, theorem, or something else. Do not rely on this function as it may be removed in the future.
+-/
 def getKind (c : ConstantInfo) : Kind :=
   if c.isThm then Kind.thm
   else if c.isDef then Kind.defin
@@ -148,6 +181,9 @@ namespace Environment
 
 variable (env : Environment)
 
+/--
+Returns a dictionary containing all the modules whose root name is not included in `excludedRootNames`.
+-/
 def userDefinedModules : SMap Name ModuleIdx := Id.run do
   let names := env.allImportedModuleNames.filter (!excludedRootNames.contains ·.getRoot)
   let mut smap := SMap.empty
@@ -156,6 +192,9 @@ def userDefinedModules : SMap Name ModuleIdx := Id.run do
     smap := smap.insert n idx
   return smap
 
+/--
+Returns a dictionary containing all the constants whose name is not included in `excludedConstNames` and whose module is in `userDefinedModules`.
+-/
 def userDefinedConstants : ConstMap × ConstantInfoSet :=
   let modules := env.userDefinedModules
   let f (acc : ConstMap × ConstantInfoSet) (n : Name) (c : ConstantInfo)
