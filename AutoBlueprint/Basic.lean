@@ -176,6 +176,7 @@ def createBlueprint (fname : Option String) : CommandElabM Unit := do
     stream.putStrLn s!"Type dependencies: {type_deps}"
     let value_deps := c.getValueDependencies constMap
     stream.putStrLn s!"Value dependencies: {value_deps}"
+    stream.putStrLn ""
   stream.putStrLn ""
 
   IO.println "Done!"
