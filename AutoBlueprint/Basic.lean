@@ -33,7 +33,71 @@ end AutoBlueprint
 
 open AutoBlueprint
 
-namespace Lean.Environment
+namespace Lean
+
+namespace Expr
+
+def getUsedConstNamesFrom (consts : ConstMap) (e : Expr) : Array Name :=
+  let f (n : Name) (ns : Array Name) : Array Name :=
+    if consts.contains n then ns.push n else ns
+  e.foldConsts #[] f
+
+def getUsedConstInfoFrom (consts : ConstMap) (e : Expr) : Array ConstantInfo :=
+  let f (n : Name) (arr : Array ConstantInfo) : Array ConstantInfo :=
+    match consts.find? n with
+    | some c => arr.push c
+    | none => arr
+  e.foldConsts #[] f
+
+def getUsedConstNamesFromAsSet (consts : ConstMap) (e : Expr) : NameSet :=
+  let f (n : Name) (ns : NameSet) : NameSet :=
+    if consts.contains n then ns.insert n else ns
+  e.foldConsts {} f
+
+end Expr
+
+namespace ConstantInfo
+
+def getTypeDependencies (consts : ConstMap) (c : ConstantInfo) : Array Name :=
+  c.type.getUsedConstNamesFrom consts
+
+def getTypeDependenciesAsSet (consts : ConstMap) (c : ConstantInfo) : NameSet :=
+  c.type.getUsedConstNamesFromAsSet consts
+
+def getValueDependencies (consts : ConstMap) (c : ConstantInfo) : Array Name :=
+  let f (acc : Array Name) (n : Name) : Array Name := if consts.contains n then acc.push n else acc
+  match c.value? with
+  | some v => v.getUsedConstNamesFrom consts
+  | none => match c with
+    | .inductInfo val => val.ctors.foldl f #[]
+    | .opaqueInfo val => val.value.getUsedConstNamesFrom consts
+    | .ctorInfo val => if consts.contains val.name then #[val.name] else #[]
+    | .recInfo val => val.all.foldl f #[]
+    | _ => #[]
+
+def getValueDependenciesAsSet (consts : ConstMap) (c : ConstantInfo) : NameSet :=
+  let f (acc : NameSet) (n : Name) : NameSet := if consts.contains n then acc.insert n else acc
+  match c.value? with
+  | some v => v.getUsedConstNamesFromAsSet consts
+  | none =>
+    match c with
+      | .inductInfo val => @RBTree.ofList Name Name.quickCmp val.ctors |>.fold f NameSet.empty
+      | .opaqueInfo val => val.value.getUsedConstNamesFromAsSet consts
+      | .ctorInfo val =>
+        if consts.contains val.name then NameSet.empty.insert val.name
+        else NameSet.empty
+      | .recInfo val => @RBTree.ofList Name Name.quickCmp val.all |>.fold f NameSet.empty
+      | _ => {}
+
+def getDependencies (consts : ConstMap) (c : ConstantInfo) : Array Name :=
+  getTypeDependencies consts c ++ getValueDependencies consts c
+
+def getDependenciesAsSet (consts : ConstMap) (c : ConstantInfo) : NameSet :=
+  getTypeDependenciesAsSet consts c ++ getValueDependenciesAsSet consts c
+
+end ConstantInfo
+
+namespace Environment
 
 variable (env : Environment)
 
@@ -58,7 +122,27 @@ def userDefinedConstants : ConstMap × ConstantInfoSet :=
         acc
   env.constants.fold f ({}, {})
 
-end Lean.Environment
+  -- def getTypeDependencies (c : ConstantInfo) : Array Name :=
+  --   c.getTypeDependencies env.userDefinedConstants.1
+
+  -- def getTypeDependenciesAsSet (c : ConstantInfo) : NameSet :=
+  --   c.getTypeDependenciesAsSet env.userDefinedConstants.1
+
+  -- def getValueDependencies (c : ConstantInfo) : Array Name :=
+  --   c.getValueDependencies env.userDefinedConstants.1
+
+  -- def getValueDependenciesAsSet (c : ConstantInfo) : NameSet :=
+  --   c.getValueDependenciesAsSet env.userDefinedConstants.1
+
+  -- def getDependencies (c : ConstantInfo) : Array Name :=
+  --   c.getDependencies env.userDefinedConstants.1
+
+  -- def getDependenciesAsSet (c : ConstantInfo) : NameSet :=
+  --   c.getDependenciesAsSet env.userDefinedConstants.1
+
+end Environment
+
+end Lean
 
 namespace AutoBlueprint
 
@@ -80,7 +164,7 @@ def createBlueprint (fname : Option String) : CommandElabM Unit := do
   let userModules := env.userDefinedModules
   stream.putStrLn "User modules:"
   for (n, idx) in userModules.toList do
-    stream.putStrLn s!"{n} {idx}"
+    stream.putStrLn s!"{n}"
   stream.putStrLn ""
 
   -- user defined constants
@@ -88,6 +172,10 @@ def createBlueprint (fname : Option String) : CommandElabM Unit := do
   stream.putStrLn "User constants:"
   for c in constInfoSet do
     stream.putStrLn s!"{c.name}"
+    let type_deps := c.getTypeDependencies constMap
+    stream.putStrLn s!"Type dependencies: {type_deps}"
+    let value_deps := c.getValueDependencies constMap
+    stream.putStrLn s!"Value dependencies: {value_deps}"
   stream.putStrLn ""
 
   IO.println "Done!"
