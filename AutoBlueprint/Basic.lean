@@ -62,21 +62,34 @@ end Lean.Environment
 
 namespace AutoBlueprint
 
-def createBlueprint : CommandElabM Unit := do
+def getStream (fname : Option String) : IO IO.FS.Stream :=
+  match fname with
+  | some fname => do
+    let handle ← IO.FS.Handle.mk fname IO.FS.Mode.write
+    pure $ IO.FS.Stream.ofHandle handle
+  | none => do
+    let stream ← IO.getStdout
+    pure stream
+
+def createBlueprint (fname : Option String) : CommandElabM Unit := do
   let env ← getEnv
+
+  let stream ← getStream fname
 
   -- user defined modules
   let userModules := env.userDefinedModules
-  IO.println "User modules:"
+  stream.putStrLn "User modules:"
   for (n, idx) in userModules.toList do
-    IO.println s!"{n} {idx}"
-  IO.println ""
+    stream.putStrLn s!"{n} {idx}"
+  stream.putStrLn ""
 
   -- user defined constants
   let (constMap, constInfoSet) := env.userDefinedConstants
-  IO.println "User constants:"
+  stream.putStrLn "User constants:"
   for c in constInfoSet do
-    IO.println s!"{c.name} : {c.type}"
-  IO.println ""
+    stream.putStrLn s!"{c.name}"
+  stream.putStrLn ""
+
+  IO.println "Done!"
 
 end AutoBlueprint
