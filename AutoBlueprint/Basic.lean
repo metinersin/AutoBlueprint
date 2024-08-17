@@ -1,7 +1,7 @@
 import Lean.Elab.Command
 import ImportGraph.RequiredModules
 import Mathlib.Lean.Name
-import AutoBlueprint.Lean.Declaration
+import Mathlib.Lean.Expr.Basic
 
 open Lean Elab Command
 
@@ -29,6 +29,28 @@ abbrev excludedConstNames (n : Name) : Bool :=
   n.isAnonymous ||
   n.isNum
 
+inductive Kind where
+  | defin
+  | thm
+  | other
+
+namespace Kind
+
+def toString : Kind → String
+  | defin => "definition"
+  | thm => "theorem"
+  | other => "other"
+
+instance : ToString Kind := ⟨toString⟩
+
+end Kind
+
+structure Decl where
+  name : Name
+  kind : Kind
+  type_deps : NameSet
+  value_deps : NameSet
+
 end AutoBlueprint
 
 open AutoBlueprint
@@ -55,6 +77,26 @@ def getUsedConstNamesFromAsSet (consts : ConstMap) (e : Expr) : NameSet :=
   e.foldConsts {} f
 
 end Expr
+
+def ConstantInfo.quickCmp (c₁ c₂ : ConstantInfo) : Ordering :=
+  Name.quickCmp c₁.name c₂.name
+
+def ConstantInfoSet := RBTree ConstantInfo ConstantInfo.quickCmp
+
+namespace ConstantInfoSet
+
+def empty : ConstantInfoSet := mkRBTree ConstantInfo ConstantInfo.quickCmp
+instance : EmptyCollection ConstantInfoSet := ⟨empty⟩
+instance : Inhabited ConstantInfoSet := ⟨empty⟩
+
+instance : Coe ConstantInfoSet (RBTree ConstantInfo ConstantInfo.quickCmp) := ⟨id⟩
+
+instance : ForIn m ConstantInfoSet ConstantInfo where
+  forIn := RBTree.forIn
+
+def contains (s : ConstantInfoSet) (c : ConstantInfo) : Bool := RBMap.contains s c
+
+end ConstantInfoSet
 
 namespace ConstantInfo
 
@@ -94,6 +136,11 @@ def getDependencies (consts : ConstMap) (c : ConstantInfo) : Array Name :=
 
 def getDependenciesAsSet (consts : ConstMap) (c : ConstantInfo) : NameSet :=
   getTypeDependenciesAsSet consts c ++ getValueDependenciesAsSet consts c
+
+def getKind (c : ConstantInfo) : Kind :=
+  if c.isThm then Kind.thm
+  else if c.isDef then Kind.defin
+  else Kind.other
 
 end ConstantInfo
 
@@ -162,16 +209,21 @@ def createBlueprint (fname : Option String) : CommandElabM Unit := do
 
   -- user defined modules
   let userModules := env.userDefinedModules
-  stream.putStrLn "User modules:"
-  for (n, idx) in userModules.toList do
+  let userModulesList := userModules.toList
+
+  stream.putStrLn s!"There are {userModulesList.length} user defined modules:"
+  for (n, _) in userModules do
     stream.putStrLn s!"{n}"
   stream.putStrLn ""
 
   -- user defined constants
   let (constMap, constInfoSet) := env.userDefinedConstants
-  stream.putStrLn "User constants:"
+  let constInfoList := constInfoSet.toList
+
+  stream.putStrLn s!"There are {constInfoList.length} user defined constants:"
   for c in constInfoSet do
-    stream.putStrLn s!"{c.name}"
+    let kind := c.getKind
+    stream.putStrLn s!"{kind}    {c.name}"
     let type_deps := c.getTypeDependencies constMap
     stream.putStrLn s!"Type dependencies: {type_deps}"
     let value_deps := c.getValueDependencies constMap
