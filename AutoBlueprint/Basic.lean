@@ -1,8 +1,7 @@
 import Lean.Elab.Command
+import ImportGraph.RequiredModules
 import Mathlib.Lean.Name
--- import Lean.Elab.Print
--- import Mathlib.Lean.Expr.Basic
--- import Batteries.Tactic.PrintDependents
+import AutoBlueprint.Lean.Declaration
 
 open Lean Elab Command
 
@@ -46,15 +45,38 @@ def userDefinedModules : SMap Name ModuleIdx := Id.run do
     smap := smap.insert n idx
   return smap
 
+def userDefinedConstants : ConstMap × ConstantInfoSet :=
+  let modules := env.userDefinedModules
+  let f (acc : ConstMap × ConstantInfoSet) (n : Name) (c : ConstantInfo)
+      :  ConstMap × ConstantInfoSet :=
+    match env.getModuleFor? n with
+    | none => acc
+    | some modName =>
+      if modules.contains modName && not (excludedConstNames n) then
+        (acc.1.insert n c, acc.2.insert c)
+      else
+        acc
+  env.constants.fold f ({}, {})
+
 end Lean.Environment
 
 namespace AutoBlueprint
 
 def createBlueprint : CommandElabM Unit := do
   let env ← getEnv
-  let userModules := env.userDefinedModules
 
+  -- user defined modules
+  let userModules := env.userDefinedModules
+  IO.println "User modules:"
   for (n, idx) in userModules.toList do
     IO.println s!"{n} {idx}"
+  IO.println ""
+
+  -- user defined constants
+  let (constMap, constInfoSet) := env.userDefinedConstants
+  IO.println "User constants:"
+  for c in constInfoSet do
+    IO.println s!"{c.name} : {c.type}"
+  IO.println ""
 
 end AutoBlueprint
