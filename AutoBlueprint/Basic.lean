@@ -1,10 +1,12 @@
-import Lean.Elab.Print
 import Lean.Elab.Command
-import Mathlib.Lean.Expr.Basic
 import Mathlib.Lean.Name
-import Batteries.Tactic.PrintDependents
+-- import Lean.Elab.Print
+-- import Mathlib.Lean.Expr.Basic
+-- import Batteries.Tactic.PrintDependents
 
 open Lean Elab Command
+
+namespace AutoBlueprint
 
 abbrev excludedRootNames : NameSet := NameSet.empty
   |>.insert `Init
@@ -28,7 +30,11 @@ abbrev excludedConstNames (n : Name) : Bool :=
   n.isAnonymous ||
   n.isNum
 
-namespace Environment
+end AutoBlueprint
+
+open AutoBlueprint
+
+namespace Lean.Environment
 
 variable (env : Environment)
 
@@ -40,4 +46,15 @@ def userDefinedModules : SMap Name ModuleIdx := Id.run do
     smap := smap.insert n idx
   return smap
 
-end Environment
+end Lean.Environment
+
+namespace AutoBlueprint
+
+def createBlueprint : CommandElabM Unit := do
+  let env ← getEnv
+  let userModules := env.userDefinedModules
+
+  for (n, idx) in userModules.toList do
+    IO.println s!"{n} {idx}"
+
+end AutoBlueprint
