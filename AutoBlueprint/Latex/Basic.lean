@@ -17,43 +17,58 @@ namespace LatexEnvironment
 
 section
 
-private def tabStr := "    "
+-- private def tabStr := "    "
 
-private def tab (tabs : Nat) (s : String) : String :=
-  (String.intercalate "" $ List.replicate tabs tabStr) ++ s
+-- private def tab (tabs : Nat) (s : String) : String :=
+--   (String.intercalate "" $ List.replicate tabs tabStr) ++ s
 
-private def beginLine (env_name : String) : String :=
-  "\\begin{" ++ env_name ++ "}\n"
+scoped instance : HMul Nat String String where
+  hMul n s := "".intercalate $ List.replicate n s
 
-private def endLine (env_name : String) : String :=
-  "\\end{" ++ env_name ++ "}\n"
+private def indent (tabs : Nat) (s : String) (tabStr := "    ") : String := Id.run do
+  let endsWithNewline := s.endsWith "\n"
+  let mut lines := s.splitOn "\n"
+  lines := if endsWithNewline then lines.take (lines.length - 1) else lines
+  let mut s := lines |>.map (tabs * tabStr ++ ·)
+                     |> "\n".intercalate
+  s := if endsWithNewline then s ++ "\n" else s
+  s
 
-private def labelLine (label? : Option String) : String :=
+private def beginLine (env_name : String) (tabs : Nat := 0) : String :=
+  indent tabs $ "\\begin{" ++ env_name ++ "}\n"
+
+private def endLine (env_name : String) (tabs : Nat := 0) : String :=
+  indent tabs $ "\\end{" ++ env_name ++ "}\n"
+
+private def labelLine (label? : Option String) (tabs : Nat := 0) : String :=
   match label? with
   | none => ""
-  | some label => "\\label{" ++ label ++ "}\n"
+  | some label => indent tabs $ "\\label{" ++ label ++ "}\n"
 
-private def leanNameLine (lean_name? : Option Name) : String :=
+private def leanNameLine (lean_name? : Option Name) (tabs : Nat := 0) : String :=
   match lean_name? with
   | none => ""
-  | some lean_name => "\\lean{" ++ lean_name.toString ++ "}\n"
+  | some lean_name => indent tabs $ "\\lean{" ++ lean_name.toString ++ "}\n"
 
-private def leanokLine (leanok : Bool) : String :=
-  if leanok then "\\leanok\n" else ""
+private def leanokLine (leanok : Bool) (tabs : Nat := 0) : String :=
+  if leanok then indent tabs $ "\\leanok\n" else ""
 
-private def usesLine (uses : List String) : String :=
+private def usesLine (uses : List String) (tabs : Nat := 0) : String :=
   if uses.isEmpty then ""
-  else "\\uses{" ++ (String.intercalate ", " uses) ++ "}\n"
+  else indent tabs $  "\\uses{" ++ (String.intercalate ", " uses) ++ "}\n"
+
+private def contentLine (content : String) (tabs : Nat := 0) : String :=
+  indent tabs $ content ++ if content.endsWith "\n" then "" else "\n"
 
 end
 
 def toString (env : LatexEnvironment) : String :=
   beginLine env.env_name ++
-  (tab 1 $ labelLine env.label?) ++
-  (tab 1 $ leanNameLine env.lean_name?) ++
-  (tab 1 $ leanokLine env.leanok) ++
-  (tab 1 $ usesLine env.uses) ++
-  (tab 1 $ env.content ++ "\n") ++
+    labelLine env.label? (tabs := 1) ++
+    leanNameLine env.lean_name? (tabs := 1) ++
+    leanokLine env.leanok (tabs := 1) ++
+    usesLine env.uses (tabs := 1) ++
+    contentLine env.content (tabs := 1) ++
   endLine env.env_name
 
 instance : ToString LatexEnvironment where
