@@ -243,9 +243,9 @@ def userDefinedConsts : ConstMap × ConstantInfoSet :=
         acc
   env.constants.fold f ({}, {})
 
-def userDefinedDecls : Array Decl :=
-  let (constMap, constInfoSet) := env.userDefinedConsts
-  sorry
+-- def userDefinedDecls : Array Decl :=
+--   let (constMap, constInfoSet) := env.userDefinedConsts
+--   sorry
 
 end Environment
 
@@ -294,7 +294,8 @@ def createBlueprint (fname : Option String) : CommandElabM Unit := do
   -- create the latex file
   stream.putStrLn "Creating the latex file...\n\n\n"
   for c in constInfoSet do
-    stream.putStr (c.toDecl constMap).toLatex.toString
+    for env in c.toDecl constMap |>.toLatex do
+    stream.putStrLn env.toString
 
   IO.println "Done!"
 
