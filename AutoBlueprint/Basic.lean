@@ -3,6 +3,8 @@ import ImportGraph.RequiredModules
 import Mathlib.Lean.Name
 import Mathlib.Lean.Expr.Basic
 
+import AutoBlueprint.Latex.Basic
+
 open Lean Elab Command
 
 namespace AutoBlueprint
@@ -50,6 +52,30 @@ structure Decl where
   kind : Kind
   type_deps : NameSet
   value_deps : NameSet
+  human_statement : String
+  human_proof : String
+
+namespace Decl
+
+def toLatex (d : Decl) : List LatexEnvironment :=
+  let env : LatexEnvironment := {
+    env_name := d.kind.toString,
+    lean_name? := some d.name,
+    leanok := true, -- TODO: do not hard code this
+    uses := d.type_deps.toList.map Name.toString,
+    content := d.human_statement
+  }
+  let proofEnv : LatexEnvironment := {
+    env_name := "proof",
+    lean_name? := none,
+    label? := none,
+    leanok := true, -- TODO: do not hard code this
+    uses := d.value_deps.toList.map Name.toString,
+    content := d.human_proof
+  }
+  [env, proofEnv]
+
+end Decl
 
 end AutoBlueprint
 
@@ -175,6 +201,15 @@ def getKind (c : ConstantInfo) : Kind :=
   else if c.isDef then Kind.defin
   else Kind.other
 
+def toDecl (cmap : ConstMap) (c : ConstantInfo) : Decl := {
+  name := c.name
+  kind := c.getKind
+  type_deps := c.getTypeDependenciesAsSet cmap
+  value_deps := c.getValueDependenciesAsSet cmap
+  human_statement := ""
+  human_proof := ""
+}
+
 end ConstantInfo
 
 namespace Environment
@@ -195,7 +230,7 @@ def userDefinedModules : SMap Name ModuleIdx := Id.run do
 /--
 Returns a dictionary containing all the constants whose name is not included in `excludedConstNames` and whose module is in `userDefinedModules`.
 -/
-def userDefinedConstants : ConstMap × ConstantInfoSet :=
+def userDefinedConsts : ConstMap × ConstantInfoSet :=
   let modules := env.userDefinedModules
   let f (acc : ConstMap × ConstantInfoSet) (n : Name) (c : ConstantInfo)
       :  ConstMap × ConstantInfoSet :=
@@ -208,23 +243,9 @@ def userDefinedConstants : ConstMap × ConstantInfoSet :=
         acc
   env.constants.fold f ({}, {})
 
-  -- def getTypeDependencies (c : ConstantInfo) : Array Name :=
-  --   c.getTypeDependencies env.userDefinedConstants.1
-
-  -- def getTypeDependenciesAsSet (c : ConstantInfo) : NameSet :=
-  --   c.getTypeDependenciesAsSet env.userDefinedConstants.1
-
-  -- def getValueDependencies (c : ConstantInfo) : Array Name :=
-  --   c.getValueDependencies env.userDefinedConstants.1
-
-  -- def getValueDependenciesAsSet (c : ConstantInfo) : NameSet :=
-  --   c.getValueDependenciesAsSet env.userDefinedConstants.1
-
-  -- def getDependencies (c : ConstantInfo) : Array Name :=
-  --   c.getDependencies env.userDefinedConstants.1
-
-  -- def getDependenciesAsSet (c : ConstantInfo) : NameSet :=
-  --   c.getDependenciesAsSet env.userDefinedConstants.1
+def userDefinedDecls : Array Decl :=
+  let (constMap, constInfoSet) := env.userDefinedConsts
+  sorry
 
 end Environment
 
@@ -256,7 +277,7 @@ def createBlueprint (fname : Option String) : CommandElabM Unit := do
   stream.putStrLn ""
 
   -- user defined constants
-  let (constMap, constInfoSet) := env.userDefinedConstants
+  let (constMap, constInfoSet) := env.userDefinedConsts
   let constInfoList := constInfoSet.toList
 
   stream.putStrLn s!"There are {constInfoList.length} user defined constants:"
@@ -269,6 +290,11 @@ def createBlueprint (fname : Option String) : CommandElabM Unit := do
     stream.putStrLn s!"Value dependencies: {value_deps}"
     stream.putStrLn ""
   stream.putStrLn ""
+
+  -- create the latex file
+  stream.putStrLn "Creating the latex file...\n\n\n"
+  for c in constInfoSet do
+    stream.putStr (c.toDecl constMap).toLatex.toString
 
   IO.println "Done!"
 
