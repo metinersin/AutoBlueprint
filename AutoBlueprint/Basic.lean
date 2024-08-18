@@ -295,7 +295,8 @@ def createBlueprint (fname : Option String) : CommandElabM Unit := do
   stream.putStrLn "Creating the latex file...\n\n\n"
   for c in constInfoSet do
     for env in c.toDecl constMap |>.toLatex do
-    stream.putStrLn env.toString
+      stream.putStr env.toString
+    stream.putStrLn ""
 
   IO.println "Done!"
 
