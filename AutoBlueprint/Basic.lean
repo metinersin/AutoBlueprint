@@ -221,11 +221,25 @@ def mkFromConstantInfo (c : ConstantInfo) : Kind :=
 end Kind
 
 structure Decl where
-  name : Name
-  kind : Kind
+  info : ConstantInfo
+
+  name : Name := info.name
+
+  kind : Kind := Kind.mkFromConstantInfo info
+
   type_deps : NameSet
+
   value_deps : NameSet
+
+  typeSorryFree : Bool := !info.type.hasSorry
+
+  valueSorryFree : Bool :=
+    match info.value? with
+    | none => true
+    | some v => !v.hasSorry
+
   human_statement : String
+
   /--
   If it is something that requires a proof.
   -/
@@ -237,7 +251,7 @@ def toLatex (d : Decl) : List LatexEnvironment :=
   let primaryLatexEnvironment : LatexEnvironment := {
     env_name := d.kind.toString,
     lean_name? := some d.name,
-    leanok := true, -- TODO: do not hard code this
+    leanok := d.typeSorryFree,
     uses := d.type_deps.toList.map Name.toString,
     content := d.human_statement
   }
@@ -249,7 +263,7 @@ def toLatex (d : Decl) : List LatexEnvironment :=
       env_name := "proof",
       lean_name? := none,
       label? := none,
-      leanok := true, -- TODO: do not hard code this
+      leanok := d.valueSorryFree,
       uses := d.value_deps.toList.map Name.toString,
       content := human_proof
     }
@@ -260,10 +274,9 @@ end Decl
 def EnvironmentData.summarize (envData : EnvironmentData) : Array Decl := Id.run do
   let mut result : Array Decl := #[]
 
-  for (n, c) in (envData.nonautoConstants : SMap _ _) do
+  for (_, c) in (envData.nonautoConstants : SMap _ _) do
     let decl : Decl := {
-      name := n,
-      kind := Kind.mkFromConstantInfo c,
+      info := c,
       type_deps := envData.typeDependenciesAsNameSet c,
       value_deps := envData.valueDependenciesAsNameSet c,
       human_statement := "",

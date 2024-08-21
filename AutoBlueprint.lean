@@ -63,7 +63,6 @@ def runForDebugging (fname : Option String) : CommandElabM String := do
     stream.putStrLn s!"Value dependencies: {valueDep.toList}"
   stream.putStrLn ""
 
-
   return "Success!"
 
 

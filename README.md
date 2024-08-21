@@ -20,10 +20,9 @@ This is a tool for automatically creating a `content.tex` file to be used by lea
 
 ## Non-Features
 
-* Autoblueprint assumes that the project is sorry-free therefore all environments contains the `\leanok` command.
+* `\leanok` command is may not be correct.
 * The created Latex environments does not contain visible content.
 
 ## TODO
 
-* Detect declarations using `sorry` and do not put `\leanok` command into their environments.
 * Get the visible content of the latex environments from the docstrings of the declarations.
