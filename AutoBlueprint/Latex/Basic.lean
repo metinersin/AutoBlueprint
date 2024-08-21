@@ -58,7 +58,10 @@ private def usesLine (uses : List String) (tabs : Nat := 0) : String :=
   else indent tabs $  "\\uses{" ++ (String.intercalate ", " uses) ++ "}\n"
 
 private def contentLine (content : String) (tabs : Nat := 0) : String :=
-  indent tabs $ content ++ if content.endsWith "\n" then "" else "\n"
+  if content.isEmpty then
+    ""
+  else
+    indent tabs $ content ++ if content.endsWith "\n" then "" else "\n"
 
 end
 

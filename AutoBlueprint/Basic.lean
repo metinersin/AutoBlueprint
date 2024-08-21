@@ -7,9 +7,9 @@ import AutoBlueprint.Latex.Basic
 
 open Lean Elab Command
 
-namespace AutoBlueprint
+namespace Lean.Name
 
-abbrev excludedRootNames : NameSet := NameSet.empty
+abbrev builtinModuleRoots : NameSet := NameSet.empty
   |>.insert `Init
   |>.insert `Lean
   |>.insert `Qq
@@ -21,7 +21,9 @@ abbrev excludedRootNames : NameSet := NameSet.empty
   |>.insert `Mathlib
   |>.insert `AutoBlueprint
 
-abbrev excludedConstNames (n : Name) : Bool :=
+def isBuiltinModuleName (n : Name) : Bool := builtinModuleRoots.contains n.getRoot
+
+abbrev isAutoConstant (n : Name) : Bool :=
   n.isAuxLemma ||
   n.isImplementationDetail ||
   n.isInternalDetail ||
@@ -30,6 +32,169 @@ abbrev excludedConstNames (n : Name) : Bool :=
   n.isInaccessibleUserName ||
   n.isAnonymous ||
   n.isNum
+
+end Lean.Name
+
+namespace Lean.NameSet
+
+def containsAutoConstant (ns : NameSet) : Bool := Id.run do
+  let mut result := false
+  for n in ns do
+    if n.isAutoConstant then
+      result := True
+      break
+  return result
+
+end Lean.NameSet
+
+namespace AutoBlueprint
+
+structure EnvironmentData where
+  /--
+  Current environment
+  -/
+  env : Environment
+
+  /--
+  Names of all imported modules.
+  -/
+  modules : NameSet := env.allImportedModuleNames.foldl (init := {}) .insert
+
+  /--
+  Names of all imported modules whose root name is not in `builtinModuleRoots`.
+  -/
+  userModules : NameSet :=
+    modules.fold (init := {}) fun acc n =>
+      if Name.isBuiltinModuleName n then acc else acc.insert n
+
+  /--
+  All constants currently avaliable in the environment as a `ConstMap`.
+  -/
+  constants : ConstMap := env.constants
+
+  /--
+  All constants as a dictionary where the key is the constant name and the value is the module in which the constant is defined.
+  -/
+  constantsAsNameModule : SMap Name Name :=
+    env.constants.fold (init := {})
+      fun (acc : SMap Name Name) (n : Name) _ =>
+        acc.insert n (env.getModuleFor? n).get!
+
+  /--
+  All constants whose defining module is in `userModules`, as a `ConstMap`. This includes automatically generated constants.
+  -/
+  constantsInUserModules : ConstMap :=
+    env.constants.fold (init := {})
+      fun (acc : ConstMap) (n : Name) (c : ConstantInfo) =>
+        match env.getModuleFor? n with
+        | none => acc
+        | some moduleName =>
+          if userModules.contains moduleName then
+            acc.insert n c
+          else
+            acc
+
+  /--
+  All constants explicitly written by the user (and hence whose defining module is in `userModules`) as a `ConstMap`.
+  -/
+  nonautoConstants : ConstMap :=
+    constantsInUserModules.fold (init := {})
+      fun (acc : ConstMap) (n : Name) (c : ConstantInfo) =>
+        if Name.isAutoConstant n then
+          acc
+        else
+          acc.insert n c
+
+  /--
+  All automatically generated constants whose defining module is in `userModules`, as a `ConstantInfoSet`.
+  -/
+  autoConstansInUserModules : ConstMap :=
+    constantsInUserModules.fold (init := {})
+      fun (acc : ConstMap) (n : Name) (c : ConstantInfo) =>
+        if Name.isAutoConstant n then
+          acc.insert n c
+        else
+          acc
+
+namespace EnvironmentData
+
+/--
+All constants occurring in the given expression and whose defining module is in `userModules`.
+-/
+def usedConstantsFromUserModules (envData : EnvironmentData) (e : Expr) : NameSet :=
+  e.foldConsts (init := {})
+    fun (n : Name) (acc : NameSet) =>
+      if envData.constantsInUserModules.contains n then
+        acc.insert n
+      else
+        acc
+
+/--
+All constants whose defining module is in `userModules` and occurring in the type of the given constant.
+-/
+def firstOrderTypeDependencies (envData : EnvironmentData) (c : ConstantInfo) : NameSet :=
+  envData.usedConstantsFromUserModules c.type
+
+/--
+All constants whose defining module is in `userModules` and occurring in the value of the given constant.
+-/
+def firstOrderValueDependencies (envData : EnvironmentData) (c : ConstantInfo) : NameSet :=
+  match c with
+  | ConstantInfo.axiomInfo _ => {}
+  | ConstantInfo.opaqueInfo _ => {}
+  | ConstantInfo.quotInfo _ => {}
+  | ConstantInfo.defnInfo v => envData.usedConstantsFromUserModules v.value
+  | ConstantInfo.thmInfo v => envData.usedConstantsFromUserModules v.value
+  | ConstantInfo.ctorInfo _ => {}
+  | ConstantInfo.inductInfo v =>
+    v.ctors.foldl (init := {})
+      fun acc n =>
+        if envData.constantsInUserModules.contains n then
+          acc.insert n
+        else
+          acc
+  | ConstantInfo.recInfo _ => {}
+
+/--
+All constants whose defining module is in `userModules` and occurring in the type or value of the given constant.
+-/
+def firstOrderDependencies (envData : EnvironmentData) (c : ConstantInfo) : NameSet :=
+  envData.firstOrderTypeDependencies c ++ envData.firstOrderValueDependencies c
+
+/--
+Replace an automatically generated name in `deps` with the first order dependencies of the corresponding constant.
+-/
+def expandDependencies (envData : EnvironmentData) (deps : NameSet)
+    : NameSet := Id.run do
+  let mut depsExpanded : NameSet := {}
+  for n in deps do
+    if n.isAutoConstant then
+      let c := envData.constantsInUserModules.find! n
+      let newDeps := envData.firstOrderDependencies c
+      depsExpanded := depsExpanded ++ newDeps
+    else
+      depsExpanded := depsExpanded.insert n
+  return depsExpanded
+
+/--
+All non-automatically generated constants whose defining module is in `userModules` and on which the type of `c` depends. This functions starts with `envData.firstOrderTypeDependencies c` and applies `expandDependencies` iteratively until no automatically generated constants are left.
+-/
+def typeDependenciesAsNameSet (envData : EnvironmentData) (c : ConstantInfo) : NameSet := Id.run do
+  let mut deps := envData.firstOrderTypeDependencies c
+  while deps.containsAutoConstant do
+    deps := envData.expandDependencies deps
+  return deps
+
+/--
+All non-automatically generated constants whose defining module is in `userModules` and on which the value of `c` depends. This functions starts with `envData.firstOrderValueDependencies c` and applies `expandDependencies` iteratively until no automatically generated constants are left.
+-/
+def valueDependenciesAsNameSet (envData : EnvironmentData) (c : ConstantInfo) : NameSet := Id.run do
+  let mut deps := envData.firstOrderValueDependencies c
+  while deps.containsAutoConstant do
+    deps := envData.expandDependencies deps
+  return deps
+
+end EnvironmentData
 
 inductive Kind where
   | defin
@@ -45,6 +210,14 @@ def toString : Kind → String
 
 instance : ToString Kind := ⟨toString⟩
 
+def mkFromConstantInfo (c : ConstantInfo) : Kind :=
+  if c.isThm then
+    Kind.thm
+  else if c.isDef then
+    Kind.defin
+  else
+    Kind.other
+
 end Kind
 
 structure Decl where
@@ -53,251 +226,51 @@ structure Decl where
   type_deps : NameSet
   value_deps : NameSet
   human_statement : String
-  human_proof : String
+  /--
+  If it is something that requires a proof.
+  -/
+  human_proof : Option String
 
 namespace Decl
 
 def toLatex (d : Decl) : List LatexEnvironment :=
-  let env : LatexEnvironment := {
+  let primaryLatexEnvironment : LatexEnvironment := {
     env_name := d.kind.toString,
     lean_name? := some d.name,
     leanok := true, -- TODO: do not hard code this
     uses := d.type_deps.toList.map Name.toString,
     content := d.human_statement
   }
-  let proofEnv : LatexEnvironment := {
-    env_name := "proof",
-    lean_name? := none,
-    label? := none,
-    leanok := true, -- TODO: do not hard code this
-    uses := d.value_deps.toList.map Name.toString,
-    content := d.human_proof
-  }
-  [env, proofEnv]
+
+  match d.human_proof with
+  | none => [primaryLatexEnvironment]
+  | some human_proof =>
+    let proofLatexEnvironment : LatexEnvironment := {
+      env_name := "proof",
+      lean_name? := none,
+      label? := none,
+      leanok := true, -- TODO: do not hard code this
+      uses := d.value_deps.toList.map Name.toString,
+      content := human_proof
+    }
+    [primaryLatexEnvironment, proofLatexEnvironment]
 
 end Decl
 
-end AutoBlueprint
+def EnvironmentData.summarize (envData : EnvironmentData) : Array Decl := Id.run do
+  let mut result : Array Decl := #[]
 
-open AutoBlueprint
+  for (n, c) in (envData.nonautoConstants : SMap _ _) do
+    let decl : Decl := {
+      name := n,
+      kind := Kind.mkFromConstantInfo c,
+      type_deps := envData.typeDependenciesAsNameSet c,
+      value_deps := envData.valueDependenciesAsNameSet c,
+      human_statement := "",
+      human_proof := ""
+    }
+    result := result.push decl
 
-namespace Lean
-
-namespace Expr
-
-/--
-Returns the constants used in the expression `e` that are in the given constant map.
--/
-def getUsedConstNamesFrom (consts : ConstMap) (e : Expr) : Array Name :=
-  let f (n : Name) (ns : Array Name) : Array Name :=
-    if consts.contains n then ns.push n else ns
-  e.foldConsts #[] f
-
-/--
-Returns the `ConstantInfo`'s of all constants used in the expression `e` that are in the given constant map.
--/
-def getUsedConstInfoFrom (consts : ConstMap) (e : Expr) : Array ConstantInfo :=
-  let f (n : Name) (arr : Array ConstantInfo) : Array ConstantInfo :=
-    match consts.find? n with
-    | some c => arr.push c
-    | none => arr
-  e.foldConsts #[] f
-
-/--
-Same as `getUsedConstNamesFrom`, but returns a `NameSet` instead of an `Array Name`.
--/
-def getUsedConstNamesFromAsSet (consts : ConstMap) (e : Expr) : NameSet :=
-  let f (n : Name) (ns : NameSet) : NameSet :=
-    if consts.contains n then ns.insert n else ns
-  e.foldConsts {} f
-
-end Expr
-
-def ConstantInfo.quickCmp (c₁ c₂ : ConstantInfo) : Ordering :=
-  Name.quickCmp c₁.name c₂.name
-
-/--
-Similar to `NameSet`, but for `ConstantInfo` instead of `Name`.
--/
-def ConstantInfoSet := RBTree ConstantInfo ConstantInfo.quickCmp
-
-namespace ConstantInfoSet
-
-def empty : ConstantInfoSet := mkRBTree ConstantInfo ConstantInfo.quickCmp
-instance : EmptyCollection ConstantInfoSet := ⟨empty⟩
-instance : Inhabited ConstantInfoSet := ⟨empty⟩
-
-instance : Coe ConstantInfoSet (RBTree ConstantInfo ConstantInfo.quickCmp) := ⟨id⟩
-
-instance : ForIn m ConstantInfoSet ConstantInfo where
-  forIn := RBTree.forIn
-
-def contains (s : ConstantInfoSet) (c : ConstantInfo) : Bool := RBMap.contains s c
-
-end ConstantInfoSet
-
-namespace ConstantInfo
-
-/--
-Returns the constants used in the type of the constant `c` that are in the given constant map.
--/
-def getTypeDependencies (consts : ConstMap) (c : ConstantInfo) : Array Name :=
-  c.type.getUsedConstNamesFrom consts
-
-/--
-Same as `getTypeDependencies`, but returns a `NameSet` instead of an `Array Name`.
--/
-def getTypeDependenciesAsSet (consts : ConstMap) (c : ConstantInfo) : NameSet :=
-  c.type.getUsedConstNamesFromAsSet consts
-
-/--
-Returns the constants used in the value of the constant `c` that are in the given constant map.
--/
-def getValueDependencies (consts : ConstMap) (c : ConstantInfo) : Array Name :=
-  let f (acc : Array Name) (n : Name) : Array Name := if consts.contains n then acc.push n else acc
-  match c.value? with
-  | some v => v.getUsedConstNamesFrom consts
-  | none => match c with
-    | .inductInfo val => val.ctors.foldl f #[]
-    | .opaqueInfo val => val.value.getUsedConstNamesFrom consts
-    | .ctorInfo val => if consts.contains val.name then #[val.name] else #[]
-    | .recInfo val => val.all.foldl f #[]
-    | _ => #[]
-
-/--
-Same as `getValueDependencies`, but returns a `NameSet` instead of an `Array Name`.
--/
-def getValueDependenciesAsSet (consts : ConstMap) (c : ConstantInfo) : NameSet :=
-  let f (acc : NameSet) (n : Name) : NameSet := if consts.contains n then acc.insert n else acc
-  match c.value? with
-  | some v => v.getUsedConstNamesFromAsSet consts
-  | none =>
-    match c with
-      | .inductInfo val => @RBTree.ofList Name Name.quickCmp val.ctors |>.fold f NameSet.empty
-      | .opaqueInfo val => val.value.getUsedConstNamesFromAsSet consts
-      | .ctorInfo val =>
-        if consts.contains val.name then NameSet.empty.insert val.name
-        else NameSet.empty
-      | .recInfo val => @RBTree.ofList Name Name.quickCmp val.all |>.fold f NameSet.empty
-      | _ => {}
-
-/--
-Returns the constants used in the type and value of the constant `c` that are in the given constant map.
--/
-def getDependencies (consts : ConstMap) (c : ConstantInfo) : Array Name :=
-  getTypeDependencies consts c ++ getValueDependencies consts c
-
-/--
-Same as `getDependencies`, but returns a `NameSet` instead of an `Array Name`.
--/
-def getDependenciesAsSet (consts : ConstMap) (c : ConstantInfo) : NameSet :=
-  getTypeDependenciesAsSet consts c ++ getValueDependenciesAsSet consts c
-
-/--
-Returns the kind of the constant `c` i.e, whether it is a definition, theorem, or something else. Do not rely on this function as it may be removed in the future.
--/
-def getKind (c : ConstantInfo) : Kind :=
-  if c.isThm then Kind.thm
-  else if c.isDef then Kind.defin
-  else Kind.other
-
-def toDecl (cmap : ConstMap) (c : ConstantInfo) : Decl := {
-  name := c.name
-  kind := c.getKind
-  type_deps := c.getTypeDependenciesAsSet cmap
-  value_deps := c.getValueDependenciesAsSet cmap
-  human_statement := ""
-  human_proof := ""
-}
-
-end ConstantInfo
-
-namespace Environment
-
-variable (env : Environment)
-
-/--
-Returns a dictionary containing all the modules whose root name is not included in `excludedRootNames`.
--/
-def userDefinedModules : SMap Name ModuleIdx := Id.run do
-  let names := env.allImportedModuleNames.filter (!excludedRootNames.contains ·.getRoot)
-  let mut smap := SMap.empty
-  for n in names do
-    let idx := (env.getModuleIdx? n).get!
-    smap := smap.insert n idx
-  return smap
-
-/--
-Returns a dictionary containing all the constants whose name is not included in `excludedConstNames` and whose module is in `userDefinedModules`.
--/
-def userDefinedConsts : ConstMap × ConstantInfoSet :=
-  let modules := env.userDefinedModules
-  let f (acc : ConstMap × ConstantInfoSet) (n : Name) (c : ConstantInfo)
-      :  ConstMap × ConstantInfoSet :=
-    match env.getModuleFor? n with
-    | none => acc
-    | some modName =>
-      if modules.contains modName && not (excludedConstNames n) then
-        (acc.1.insert n c, acc.2.insert c)
-      else
-        acc
-  env.constants.fold f ({}, {})
-
--- def userDefinedDecls : Array Decl :=
---   let (constMap, constInfoSet) := env.userDefinedConsts
---   sorry
-
-end Environment
-
-end Lean
-
-namespace AutoBlueprint
-
-def getStream (fname : Option String) : IO IO.FS.Stream :=
-  match fname with
-  | some fname => do
-    let handle ← IO.FS.Handle.mk fname IO.FS.Mode.write
-    pure $ IO.FS.Stream.ofHandle handle
-  | none => do
-    let stream ← IO.getStdout
-    pure stream
-
-def createBlueprint (fname : Option String) : CommandElabM Unit := do
-  let env ← getEnv
-
-  let stream ← getStream fname
-
-  -- user defined modules
-  let userModules := env.userDefinedModules
-  let userModulesList := userModules.toList
-
-  stream.putStrLn s!"There are {userModulesList.length} user defined modules:"
-  for (n, _) in userModules do
-    stream.putStrLn s!"{n}"
-  stream.putStrLn ""
-
-  -- user defined constants
-  let (constMap, constInfoSet) := env.userDefinedConsts
-  let constInfoList := constInfoSet.toList
-
-  stream.putStrLn s!"There are {constInfoList.length} user defined constants:"
-  for c in constInfoSet do
-    let kind := c.getKind
-    stream.putStrLn s!"{kind}    {c.name}"
-    let type_deps := c.getTypeDependencies constMap
-    stream.putStrLn s!"Type dependencies: {type_deps}"
-    let value_deps := c.getValueDependencies constMap
-    stream.putStrLn s!"Value dependencies: {value_deps}"
-    stream.putStrLn ""
-  stream.putStrLn ""
-
-  -- create the latex file
-  stream.putStrLn "Creating the latex file...\n\n\n"
-  for c in constInfoSet do
-    for env in c.toDecl constMap |>.toLatex do
-      stream.putStr env.toString
-    stream.putStrLn ""
-
-  IO.println "Done!"
+  return result
 
 end AutoBlueprint
